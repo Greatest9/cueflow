@@ -13,7 +13,6 @@ class PermissionsHelper {
     ];
     
     if (Platform.isAndroid) {
-      // Request ignore battery optimizations separately
       try {
         await Permission.ignoreBatteryOptimizations.request();
       } catch (_) {}
