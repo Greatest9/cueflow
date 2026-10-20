@@ -43,3 +43,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local downloaded build artifacts
+/artifacts/
+*.apk
+*.aab
