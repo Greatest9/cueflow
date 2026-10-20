@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'screens/role_picker_screen.dart';
+import 'screens/permission_gate_screen.dart';
 import 'services/app_state.dart';
 
 void main() async {
@@ -24,7 +24,7 @@ class CueFlowApp extends StatelessWidget {
           useMaterial3: true,
           colorSchemeSeed: Colors.indigo,
         ),
-        home: const RolePickerScreen(),
+        home: const PermissionGateScreen(),
       ),
     );
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/app_state.dart';
+import '../services/network_service.dart';
 import '../utils/network_utils.dart';
 import 'host_screen.dart';
 import 'service_screen.dart';
@@ -19,6 +20,41 @@ class _RolePickerScreenState extends State<RolePickerScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<AppState>().loadPrefs();
     });
+  }
+
+  Future<bool> _ensureWifi({required bool isHost}) async {
+    final connected = await NetworkService.isWifiConnected();
+    if (connected) return true;
+    if (!mounted) return false;
+    final goSettings = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(isHost ? 'Turn on hotspot / WiFi' : 'Turn on WiFi'),
+        content: Text(
+          isHost
+              ? 'The Host must have its hotspot (or WiFi) on so other phones can join.'
+              : 'Connect this phone to the Host\'s WiFi/hotspot before continuing.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(isHost ? 'Open Hotspot Settings' : 'Open WiFi Settings'),
+          ),
+        ],
+      ),
+    );
+    if (goSettings == true) {
+      if (isHost) {
+        await NetworkService.openHotspotSettings();
+      } else {
+        await NetworkService.openWifiSettings();
+      }
+    }
+    return false;
   }
 
   @override
@@ -47,6 +83,7 @@ class _RolePickerScreenState extends State<RolePickerScreen> {
               icon: Icons.router,
               color: Colors.purple,
               onTap: () async {
+                if (!await _ensureWifi(isHost: true)) return;
                 appState.setRole(AppRole.host);
                 final ip = await NetworkUtils.getLocalIp();
                 appState.setHostIp(ip);
@@ -64,8 +101,10 @@ class _RolePickerScreenState extends State<RolePickerScreen> {
               subtitle: 'Music Director - speak cues',
               icon: Icons.record_voice_over,
               color: Colors.red,
-              onTap: () {
+              onTap: () async {
+                if (!await _ensureWifi(isHost: false)) return;
                 appState.setRole(AppRole.md);
+                if (!mounted) return;
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const ServiceScreen()),
@@ -78,8 +117,10 @@ class _RolePickerScreenState extends State<RolePickerScreen> {
               subtitle: 'Second speaker - speak cues',
               icon: Icons.voice_chat,
               color: Colors.orange,
-              onTap: () {
+              onTap: () async {
+                if (!await _ensureWifi(isHost: false)) return;
                 appState.setRole(AppRole.second);
+                if (!mounted) return;
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const ServiceScreen()),
@@ -92,8 +133,10 @@ class _RolePickerScreenState extends State<RolePickerScreen> {
               subtitle: 'Receive cues only',
               icon: Icons.headset,
               color: Colors.blue,
-              onTap: () {
+              onTap: () async {
+                if (!await _ensureWifi(isHost: false)) return;
                 appState.setRole(AppRole.listener);
+                if (!mounted) return;
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const ServiceScreen()),
@@ -140,7 +183,7 @@ class _RoleButton extends StatelessWidget {
           child: Row(
             children: [
               CircleAvatar(
-                backgroundColor: color.withOpacity(0.2),
+                backgroundColor: color.withValues(alpha: 0.2),
                 child: Icon(icon, color: color),
               ),
               const SizedBox(width: 16),
