@@ -5,20 +5,32 @@ allprojects {
     }
 }
 
-val newBuildDir: Directory =
-    rootProject.layout.buildDirectory
-        .dir("../../build")
-        .get()
-rootProject.layout.buildDirectory.value(newBuildDir)
-
+rootProject.buildDir = file("../build")
 subprojects {
-    val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
-    project.layout.buildDirectory.value(newSubprojectBuildDir)
+    project.buildDir = File(rootProject.buildDir, project.name)
 }
 subprojects {
     project.evaluationDependsOn(":app")
 }
 
 tasks.register<Delete>("clean") {
-    delete(rootProject.layout.buildDirectory)
+    delete(rootProject.buildDir)
+}
+subprojects {
+    afterEvaluate {
+        if (project.hasProperty("android")) {
+            val androidExt = project.extensions.findByName("android")
+            if (androidExt != null) {
+                try {
+                    val getNamespace = androidExt.javaClass.getMethod("getNamespace")
+                    val ns = getNamespace.invoke(androidExt)
+                    if (ns == null) {
+                        val setNamespace = androidExt.javaClass.getMethod("setNamespace", String::class.java)
+                        setNamespace.invoke(androidExt, project.group.toString().ifEmpty { "com.example." })
+                    }
+                } catch (e: Exception) {
+                }
+            }
+        }
+    }
 }
