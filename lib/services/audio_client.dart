@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 enum SpeakerId { md, second, none }
@@ -7,10 +7,11 @@ enum SpeakerId { md, second, none }
 class AudioClient {
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
-  final Function(Uint8List data, int speakerId) onAudioReceived;
+  final Function(Uint8List taggedPacket) onAudioReceived;
   String serverUrl;
+  VoidCallback? onDisconnected;
   
-  AudioClient({required this.serverUrl, required this.onAudioReceived});
+  AudioClient({required this.serverUrl, required this.onAudioReceived, this.onDisconnected});
   
   Future<bool> connect(String role) async {
     try {
@@ -25,19 +26,17 @@ class AudioClient {
         (message) {
           if (message is List<int>) {
             final data = Uint8List.fromList(message);
-            if (data.isEmpty) return;
-            final speakerId = data[0];
-            final audioData = data.sublist(1);
-            if (audioData.isNotEmpty) {
-              onAudioReceived(audioData, speakerId);
-            }
+            if (data.length < 2) return;
+            onAudioReceived(data);
           }
         },
         onError: (e) {
           print('WebSocket error: $e');
+          onDisconnected?.call();
         },
         onDone: () {
           print('WebSocket disconnected');
+          onDisconnected?.call();
         },
       );
       

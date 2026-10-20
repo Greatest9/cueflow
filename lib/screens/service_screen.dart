@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../services/app_state.dart';
+import '../services/audio_capture.dart';
 import '../services/audio_client.dart';
+import '../services/audio_playback.dart';
 import '../services/discovery_service.dart';
 
 class ServiceScreen extends StatefulWidget {
@@ -16,8 +18,11 @@ class ServiceScreen extends StatefulWidget {
 
 class _ServiceScreenState extends State<ServiceScreen> {
   AudioClient? _client;
+  AudioCapture? _capture;
+  final AudioPlayback _playback = AudioPlayback();
   bool _connected = false;
   String _serverUrl = '';
+  bool _capturing = false;
 
   final DiscoveryService _discovery = DiscoveryService();
   StreamSubscription<List<DiscoveredHost>>? _discoverySub;
@@ -85,7 +90,20 @@ class _ServiceScreenState extends State<ServiceScreen> {
     appState.setServer(uri.host, uri.port);
 
     _client?.disconnect();
-    _client = AudioClient(serverUrl: wsUrl, onAudioReceived: _onAudioReceived);
+    await _capture?.stop();
+    _client = AudioClient(
+      serverUrl: wsUrl,
+      onAudioReceived: _onAudioReceived,
+      onDisconnected: _onDisconnected,
+    );
+
+    _playback.setVolumes(
+      md: appState.mdVolume,
+      second: appState.secondVolume,
+      mdMuted: appState.mdMuted,
+      secondMuted: appState.secondMuted,
+    );
+    _playback.setJitter(appState.jitterBufferMs);
 
     String roleStr;
     switch (appState.role) {
@@ -110,10 +128,40 @@ class _ServiceScreenState extends State<ServiceScreen> {
       setState(() => _connected = true);
       appState.setStatus('Connected');
       appState.setRunning(true);
+      await _playback.start();
+      if (isSpeakerRole(appState.role)) {
+        await _startCapture();
+      }
     } else {
       appState.setStatus('Connection failed');
       _scheduleReconnect();
     }
+  }
+
+  bool isSpeakerRole(AppRole role) =>
+      role == AppRole.md || role == AppRole.second;
+
+  Future<void> _startCapture() async {
+    final appState = context.read<AppState>();
+    _capture = AudioCapture(
+      onFrame: (frame) {
+        final tagged = Uint8List(1 + frame.length);
+        tagged[0] = appState.role == AppRole.md ? 1 : 2;
+        tagged.setRange(1, 1 + frame.length, frame);
+        _client?.sendAudio(tagged);
+      },
+    );
+    final ok = await _capture!.start();
+    if (!mounted) return;
+    setState(() => _capturing = ok);
+    if (!ok) appState.setStatus('Mic unavailable');
+  }
+
+  void _onDisconnected() {
+    if (!mounted) return;
+    setState(() => _connected = false);
+    context.read<AppState>().setStatus('Disconnected');
+    _scheduleReconnect();
   }
 
   void _scheduleReconnect() {
@@ -131,8 +179,8 @@ class _ServiceScreenState extends State<ServiceScreen> {
     await _connectTo('ws://$ip:$port');
   }
 
-  void _onAudioReceived(Uint8List data, int speakerId) {
-    // Phase 2: decode + jitter buffer + playback.
+  void _onAudioReceived(Uint8List taggedPacket) {
+    _playback.addPacket(taggedPacket);
   }
 
   Future<void> _scanQr() async {
@@ -153,7 +201,9 @@ class _ServiceScreenState extends State<ServiceScreen> {
   void dispose() {
     _discoverySub?.cancel();
     _discovery.stopDiscovery();
+    _capture?.stop();
     _client?.disconnect();
+    _playback.dispose();
     _ipController.dispose();
     _portController.dispose();
     super.dispose();
@@ -242,34 +292,11 @@ class _ServiceScreenState extends State<ServiceScreen> {
               _buildFinder(appState),
             ],
             const SizedBox(height: 16),
-            if (_connected && isSpeaker)
-              Card(
-                color: Colors.green.withValues(alpha: 0.1),
-                child: const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      Icon(Icons.mic, size: 48, color: Colors.green),
-                      SizedBox(height: 8),
-                      Text('MIC READY',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, color: Colors.green)),
-                      Text('Audio streaming arrives in Phase 2',
-                          style: TextStyle(fontSize: 12)),
-                    ],
-                  ),
-                ),
-              ),
-            if (_connected && appState.role == AppRole.listener)
-              const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text(
-                    'Receiving cues. Volume controls arrive in Phase 2.',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                ),
-              ),
+            if (_connected && isSpeaker) _buildSpeakerCard(),
+            if (_connected && appState.role == AppRole.listener) ...[
+              _buildListenerCard(appState),
+              _buildVolumeControls(appState),
+            ],
             const SizedBox(height: 8),
             const Text(
               'Keep screen off or in pocket • Open mic active',
@@ -279,6 +306,124 @@ class _ServiceScreenState extends State<ServiceScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildSpeakerCard() {
+    return Card(
+      color: (_capturing ? Colors.green : Colors.orange).withValues(alpha: 0.1),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Icon(
+              _capturing ? Icons.mic : Icons.mic_off,
+              size: 48,
+              color: _capturing ? Colors.green : Colors.orange,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _capturing ? 'MIC LIVE' : 'MIC STARTING…',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: _capturing ? Colors.green : Colors.orange,
+              ),
+            ),
+            const Text(
+              'Open mic — speaking now transmits to the band',
+              style: TextStyle(fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildListenerCard(AppState appState) {
+    return Card(
+      color: Colors.green.withValues(alpha: 0.1),
+      child: const Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Icon(Icons.headset, size: 40, color: Colors.green),
+            SizedBox(height: 8),
+            Text('RECEIVING CUES',
+                style: TextStyle(
+                    fontWeight: FontWeight.bold, color: Colors.green)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVolumeControls(AppState appState) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('Mix', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                IconButton(
+                  icon: Icon(
+                    appState.mdMuted ? Icons.volume_off : Icons.volume_up,
+                    color: Colors.red,
+                  ),
+                  onPressed: () => appState.setMdMuted(!appState.mdMuted),
+                ),
+                const SizedBox(width: 4),
+                const SizedBox(width: 56, child: Text('MD')),
+                Expanded(
+                  child: Slider(
+                    value: appState.mdVolume,
+                    onChanged: (v) {
+                      appState.setMdVolume(v);
+                      _syncVolumes(appState);
+                    },
+                  ),
+                ),
+              ],
+            ),
+            Row(
+              children: [
+                IconButton(
+                  icon: Icon(
+                    appState.secondMuted ? Icons.volume_off : Icons.volume_up,
+                    color: Colors.orange,
+                  ),
+                  onPressed: () =>
+                      appState.setSecondMuted(!appState.secondMuted),
+                ),
+                const SizedBox(width: 4),
+                const SizedBox(width: 56, child: Text('SECOND')),
+                Expanded(
+                  child: Slider(
+                    value: appState.secondVolume,
+                    onChanged: (v) {
+                      appState.setSecondVolume(v);
+                      _syncVolumes(appState);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _syncVolumes(AppState appState) {
+    _playback.setVolumes(
+      md: appState.mdVolume,
+      second: appState.secondVolume,
+      mdMuted: appState.mdMuted,
+      secondMuted: appState.secondMuted,
     );
   }
 
