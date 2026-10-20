@@ -29,19 +29,6 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Patch flutter_foreground_service namespace
-        run: |
-          FILE=$(find ~/.pub-cache/hosted/pub.dev -name 'build.gradle' -path '*flutter_foreground_service*android/build.gradle' | head -n 1)
-          if [ -n "$FILE" ]; then
-            if ! grep -q "namespace" "$FILE"; then
-              echo "" >> "$FILE"
-              echo "android { namespace 'dk.cachet.flutter_foreground_service' }" >> "$FILE"
-              echo "Patched $FILE"
-            else
-              echo "Already has namespace"
-            fi
-          fi
-
       - name: Analyze project
         run: flutter analyze || true
 
